@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FormCoach</title>
+<link rel="stylesheet" href="css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand">Form<span>Coach</span></div>
+    <div id="exercise-select">
+      <label for="exercise">Exercise</label>
+      <select id="exercise">
+        <option value="squat">Squat</option>
+        <option value="deadlift">Deadlift</option>
+        <option value="lunge">Lunge</option>
+      </select>
+    </div>
+    <div id="camera-toggle-group">
+      <button id="btn-cam-perspective" class="cam-btn active" title="Live mirror view">Perspective</button>
+      <button id="btn-cam-ortho" class="cam-btn" title="Side-view form check">Ortho (Form Check)</button>
+    </div>
+    <button id="btn-start" class="primary-btn">Start Session</button>
+  </header>
+
+  <main id="layout">
+
+    <section id="viewport-panel">
+      <div id="three-viewport"></div>
+
+      <video id="webcam" autoplay playsinline muted></video>
+
+      <div id="rep-hud">
+        <div id="rep-count">Reps: <span id="rep-count-val">0</span></div>
+        <div id="rep-phase">Phase: <span id="rep-phase-val">idle</span></div>
+      </div>
+
+      <div id="live-deviation-banner" class="hidden"></div>
+    </section>
+
+    <aside id="side-panel">
+
+      <div id="session-stats" class="card">
+        <h3>Session Stats</h3>
+        <div id="stats-body">Start a session to see live deviation counts.</div>
+      </div>
+
+      <div id="chat-panel" class="card">
+        <h3>Coach Chat</h3>
+        <div id="chat-log"></div>
+        <form id="chat-form">
+          <input id="chat-input" type="text" placeholder="Ask the coach about your form..." autocomplete="off" />
+          <button type="submit">Send</button>
+        </form>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <div id="setup-overlay">
+    <div class="setup-card">
+      <h2>FormCoach</h2>
+      <p>Real-time 3D movement mirroring and AI form coaching.<br/>Webcam only — no video ever leaves your device.</p>
+      <button id="btn-enable-cam" class="primary-btn">Enable Camera &amp; Start</button>
+      <p id="setup-status" class="muted"></p>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Backend runtime data
+backend/data/*.db
+backend/data/*.json
+
+# Classifier
+classifier/*.pt
+classifier/ec3d/
+
+# Node (if used for frontend serving)
+node_modules/
+
+# OS
+.DS_Store
