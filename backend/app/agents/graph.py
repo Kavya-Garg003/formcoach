@@ -28,7 +28,7 @@ from . import rag
 from .. import storage
 
 MODEL = os.environ.get("FORMCOACH_MODEL", "claude-sonnet-4-6")
-GEMINI_MODEL = os.environ.get("FORMCOACH_GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("FORMCOACH_GEMINI_MODEL", "gemini-3.6-flash")
 
 DISCLAIMER = (
     "Heads up: I'm a form-coaching assistant, not a certified trainer or "

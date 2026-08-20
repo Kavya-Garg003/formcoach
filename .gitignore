@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.env
+*.env
 
 # Backend runtime data
 backend/data/*.db

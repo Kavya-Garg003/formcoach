@@ -10,7 +10,10 @@ Endpoints (PRD 6.4):
 Run with:
   uvicorn app.main:app --reload --port 8000
 """
-from __future__ import annotations
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 

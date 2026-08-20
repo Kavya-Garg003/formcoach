@@ -94,8 +94,8 @@ class EC3DDataset(Dataset):
     Expects `data_3D.pickle` directly inside `data_dir`.
     """
 
-    TRAIN_SUBJECTS = [1, 2, 3]
-    TEST_SUBJECTS = [4]
+    TRAIN_SUBJECTS = ["Hugues", "Sena", "Vidit", 1, 2, 3]
+    TEST_SUBJECTS = ["Isinsu", 4]
 
     def __init__(self, data_dir: str, split: str):
         pickle_path = Path(data_dir) / "data_3D.pickle"
@@ -110,7 +110,10 @@ class EC3DDataset(Dataset):
         poses = np.asarray(data["poses"])  # (N_frames_total, 3, 25)
         labels_df = pd.DataFrame(data["labels"], columns=["act", "sub", "lab", "rep", "frame"])
         labels_df["lab"] = labels_df["lab"].astype(int)
-        labels_df["sub"] = labels_df["sub"].astype(int)
+        try:
+            labels_df["sub"] = labels_df["sub"].astype(int)
+        except (ValueError, TypeError):
+            pass
 
         subs = self.TRAIN_SUBJECTS if split == "train" else self.TEST_SUBJECTS
         keep_mask = labels_df["sub"].isin(subs).to_numpy()
