@@ -4,9 +4,18 @@ LangGraph state graph implementing PRD 6.3:
   analysis_agent runs first in both branches to summarize the session's
   recurring error patterns, so both downstream agents have that context.
 
-If ANTHROPIC_API_KEY is not set, the graph still runs end-to-end but returns
-a clearly-labeled stub reply instead of calling the LLM -- this keeps the
-whole pipeline testable/demoable without a key.
+LLM provider: this project needs zero paid API access to run. `_call_llm`
+picks a provider at runtime, in this priority order:
+  1. ANTHROPIC_API_KEY set  -> Claude (paid, but you likely already have this)
+  2. GEMINI_API_KEY set     -> Google Gemini via Google AI Studio's free tier
+                                (as of 2026: no credit card required, an
+                                indefinite -- not trial -- free daily quota
+                                on Gemini Flash models; get a key at
+                                https://aistudio.google.com/apikey)
+  3. neither set            -> demo-mode stub reply (keeps the whole graph
+                                testable/runnable with no key at all)
+Override the specific model with FORMCOACH_MODEL / FORMCOACH_GEMINI_MODEL
+env vars if you want a different one than the defaults below.
 """
 from __future__ import annotations
 import os
@@ -19,6 +28,7 @@ from . import rag
 from .. import storage
 
 MODEL = os.environ.get("FORMCOACH_MODEL", "claude-sonnet-4-6")
+GEMINI_MODEL = os.environ.get("FORMCOACH_GEMINI_MODEL", "gemini-2.5-flash")
 
 DISCLAIMER = (
     "Heads up: I'm a form-coaching assistant, not a certified trainer or "
@@ -48,13 +58,24 @@ class AgentState(TypedDict):
 
 
 def _call_llm(system: str, user: str) -> str:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return (
-            "[DEMO MODE -- no ANTHROPIC_API_KEY set on the backend, so this is "
-            "a stubbed reply instead of a real model call]\n\n"
-            f"System prompt would be:\n{system}\n\nUser message:\n{user}"
-        )
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+    if anthropic_key:
+        return _call_anthropic(system, user, anthropic_key)
+    if gemini_key:
+        return _call_gemini(system, user, gemini_key)
+
+    return (
+        "[DEMO MODE -- no ANTHROPIC_API_KEY or GEMINI_API_KEY set on the backend, "
+        "so this is a stubbed reply instead of a real model call. Get a free "
+        "Gemini key at https://aistudio.google.com/apikey and export it as "
+        "GEMINI_API_KEY to enable real coaching replies at no cost.]\n\n"
+        f"System prompt would be:\n{system}\n\nUser message:\n{user}"
+    )
+
+
+def _call_anthropic(system: str, user: str, api_key: str) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -65,6 +86,26 @@ def _call_llm(system: str, user: str) -> str:
         messages=[{"role": "user", "content": user}],
     )
     return "".join(block.text for block in resp.content if block.type == "text")
+
+
+def _call_gemini(system: str, user: str, api_key: str) -> str:
+    """Free-tier path (Google AI Studio, no credit card, indefinite daily
+    quota as of 2026 -- see the module docstring). Uses the current
+    `google-genai` SDK (the older `google-generativeai` package is
+    deprecated)."""
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+    resp = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=600,
+        ),
+    )
+    return resp.text or ""
 
 
 def router_node(state: AgentState) -> AgentState:

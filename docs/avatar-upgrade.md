@@ -1,55 +1,79 @@
-# Upgrading the avatar: primitive skeleton → rigged Kalidokit avatar
+# Avatar rendering: primitive skeleton vs. rigged VRM
 
-`frontend/js/avatarScene.js` ships with a **primitive skeleton avatar**
-(spheres + cylinders positioned directly from MediaPipe world landmarks).
-This is deliberate: it's the guaranteed-working baseline the PRD asks for
-(section 6.2/7), it needs zero downloaded assets, and it already covers
-dual-avatar comparison, deviation coloring, lighting, and both camera modes.
+`frontend/js/avatarScene.js` now supports **two** avatar rendering paths
+behind the same interface, per the PRD's "same input, same output,
+one-line swap" design goal (section 6.2):
 
-When you're ready to build the PRD's real retargeting milestone (Weeks 6-8):
+1. **Rigged VRM + Kalidokit** (`frontend/js/riggedAvatar.js`) — this is
+   the PRD's real Week 6-8 retargeting milestone, and it's wired in by
+   default. `frontend/avatars/sample.vrm` (a real, valid rigged humanoid,
+   MIT-licensed, taken directly from `@pixiv/three-vrm`'s own official
+   example assets) loads automatically when you open the app, and
+   Kalidokit drives its bone rotations from your live MediaPipe pose each
+   frame.
+2. **Primitive skeleton** (spheres + cylinders positioned straight from
+   MediaPipe world landmarks, in `avatarScene.js` itself) — the
+   guaranteed-working fallback. `AvatarScene` automatically falls back to
+   this if the VRM fails to load for any reason (missing file, blocked
+   network, WebGL issue). You'll see a console message either way telling
+   you which path is active.
 
-## 1. Get a rigged humanoid
-- Easiest: [Mixamo](https://www.mixamo.com) → pick any character → download
-  as FBX → convert to glTF with a tool like
-  [FBX2glTF](https://github.com/facebookincubator/FBX2glTF) or Blender's
-  glTF exporter.
-- Alternative: [ReadyPlayerMe](https://readyplayer.me) → export a VRM
-  avatar directly (no conversion needed).
-- Drop the resulting file in `frontend/avatars/`.
+## Using your own character instead of the included sample
 
-## 2. Load it with Three.js's GLTFLoader
+The included `sample.vrm` is a generic humanoid meant to prove the
+pipeline works, not a finished character. To swap in your own:
+
+**Easiest — VRoid Studio** (free): design a character and export directly
+to `.vrm`. Drop the file in `frontend/avatars/` and point
+`DEFAULT_VRM_URL` in `frontend/js/riggedAvatar.js` at it.
+
+**From Mixamo/ReadyPlayerMe instead:** these export FBX or glTF, not VRM,
+so they don't have the standard VRM humanoid bone-name metadata Kalidokit
+and `@pixiv/three-vrm` rely on (see "Why VRM" below). You'd need to either
+convert FBX→VRM with a tool like [UniVRM](https://github.com/vrm-c/UniVRM)
+(Unity-based), or write your own bone-name mapping table from Kalidokit's
+output names to that specific model's skeleton — more work, only worth it
+if you specifically need a Mixamo/RPM character.
+
+## Why VRM specifically
+
+Kalidokit's `Pose.solve()` output uses VRM's *standard* humanoid bone
+names directly (`Hips`, `Spine`, `LeftUpperArm`, `RightUpperLeg`, ...).
+`@pixiv/three-vrm` resolves those names against *any* VRM model's actual
+internal skeleton via `vrm.humanoid.getNormalizedBoneNode(name)` — so
+Kalidokit's output works on literally any valid VRM file with zero
+per-model configuration. That's what makes VRM the practical choice here,
+rather than a bare Mixamo-rigged glTF, which would need a hand-written
+bone-mapping table per downloaded character.
+
+## Keeping the same interface
+
+Both avatar paths are driven through `AvatarScene.update()`:
 ```js
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-const loader = new GLTFLoader();
-const gltf = await loader.loadAsync("./avatars/your-model.glb");
-scene.add(gltf.scene);
+scene.update(worldLandmarks, deviationScores, referenceLandmarks, riggedPose)
 ```
+`riggedPose` (Kalidokit's solved output, computed once per frame only if
+the VRM finished loading — see `main.js`) drives the VRM path;
+`worldLandmarks` + `deviationScores` alone drive the primitive-skeleton
+fallback. Swapping which one is "primary" is internal to `AvatarScene` —
+nothing in `main.js` needs to change based on which one is active.
 
-## 3. Add Kalidokit for landmark → bone-rotation retargeting
-```html
-<script type="importmap">
-{ "imports": { "kalidokit": "https://cdn.jsdelivr.net/npm/kalidokit@1.1.4/dist/kalidokit.module.js" } }
-</script>
-```
-```js
-import * as Kalidokit from "kalidokit";
-const rig = Kalidokit.Pose.solve(poseWorldLandmarks3D, poseLandmarks2D, { runtime: "mediapipe" });
-// `rig` gives you rotations per bone (Hips, Spine, LeftUpperLeg, etc.) --
-// apply them to the corresponding bones in gltf.scene's skeleton each frame.
-```
+## Deviation coloring: one difference worth knowing
 
-## 4. Keep the same interface
-Both avatar implementations should expose:
-```js
-scene.update(worldLandmarks, deviationScores, referenceLandmarks)
-```
-so swapping one for the other is a one-line change in `main.js`, per the
-PRD's own "same input, same output, one-line swap" design goal (section
-6.2).
+The primitive skeleton colors each joint sphere/bone individually
+(true per-joint HSL green→red lerp, PRD 6.2). The VRM path tints the
+*whole figure* based on the single worst active deviation score instead
+(see `riggedAvatar.js`'s `tintVRM`) — VRM meshes don't have the clean
+one-material-per-joint split a primitive skeleton does, so per-joint
+coloring isn't a natural fit there. The live deviation banner and the
+session-stats panel still carry the precise per-joint detail either way,
+so no information is actually lost — just displayed differently.
 
-## 5. Decision checkpoint (PRD: end of Week 8)
-Compare tracking accuracy and visual smoothness of the primitive-skeleton
-baseline vs. your custom CCD-IK or Kalidokit implementation using your own
-body as the test case, and keep whichever wins. If neither custom option
-is stable by then, shipping the primitive skeleton is not a failure --
-it's the documented fallback.
+## Custom CCD-IK (PRD Week 8 stretch)
+
+If you want to attempt your own CCD (Cyclic Coordinate Descent) IK solver
+per the PRD's original Week 8 milestone instead of (or in addition to)
+Kalidokit, build it as a third implementation behind the same
+`scene.update(...)` interface, then run the PRD's own decision checkpoint:
+compare tracking accuracy and visual smoothness against the Kalidokit/VRM
+path using your own body as the test case, and keep whichever wins.

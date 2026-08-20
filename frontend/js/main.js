@@ -4,6 +4,7 @@ import { computeJointAngles, estimateKneeValgusRatio } from "./jointAngles.js";
 import { RepPhaseTracker } from "./repPhase.js";
 import { classifyDeviations } from "./deviationRules.js";
 import { AvatarScene } from "./avatarScene.js";
+import { solvePose } from "./riggedAvatar.js";
 import { ChatPanel } from "./chat.js";
 import { api } from "./api.js";
 
@@ -113,7 +114,12 @@ function startRenderLoop() {
       updateDeviationBanner(deviationResult.deviations);
     }
 
-    scene.update(smoothedWorld, deviationResult.scores);
+    // Only worth solving Kalidokit's rotations once the VRM avatar has
+    // actually loaded -- otherwise scene.update() ignores this argument
+    // and it'd be wasted work every frame.
+    const riggedPose = scene.vrmPrimary ? solvePose(result.worldLandmarks, result.landmarks, els.video) : null;
+
+    scene.update(smoothedWorld, deviationResult.scores, null, riggedPose);
   };
   loop();
 }

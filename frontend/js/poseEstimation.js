@@ -1,10 +1,16 @@
 /**
  * Thin wrapper around MediaPipe Tasks Vision's PoseLandmarker (BlazePose
- * GHUM 3D, 33 landmarks), per PRD 6.1. Loaded from a CDN by default so the
- * project runs with zero local downloads; see README "What to download"
- * for how to self-host the wasm bundle + .task model file for offline use
- * or if your network blocks the CDN.
+ * GHUM 3D, 33 landmarks), per PRD 6.1. `@mediapipe/tasks-vision` is a bare
+ * specifier resolved either by the CDN importmap in index.html (zero
+ * install) or by node_modules if you're running the npm/Vite dev server
+ * (see README/package.json) -- same import statement either way.
+ *
+ * The WASM runtime and the .task model file still always load from a URL
+ * (CDN by default) rather than through the bundler, since they're binary
+ * assets, not JS modules. See README "What to download" for how to
+ * self-host both for offline use or if your network blocks the CDN.
  */
+import { PoseLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
 const CDN_VISION_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
 const CDN_MODEL_URL =
@@ -15,17 +21,6 @@ const CDN_MODEL_URL =
 const VISION_WASM_PATH = CDN_VISION_WASM;
 const MODEL_ASSET_PATH = CDN_MODEL_URL;
 
-let PoseLandmarker, FilesetResolver;
-
-async function loadMediapipeModule() {
-  if (PoseLandmarker && FilesetResolver) return;
-  const mod = await import(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
-  );
-  PoseLandmarker = mod.PoseLandmarker;
-  FilesetResolver = mod.FilesetResolver;
-}
-
 export class PoseEstimator {
   constructor() {
     this.landmarker = null;
@@ -33,7 +28,6 @@ export class PoseEstimator {
   }
 
   async init({ delegate = "GPU" } = {}) {
-    await loadMediapipeModule();
     const vision = await FilesetResolver.forVisionTasks(VISION_WASM_PATH);
     this.landmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {

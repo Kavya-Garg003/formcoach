@@ -2,25 +2,49 @@
 Training script for the EC3D rep-correctness classifier.
 
   python train.py --smoke-test          # verifies the training loop runs, using random data
-  python train.py --data-dir ./ec3d     # trains on real EC3D data once you've downloaded + prepped it
+  python train.py --data-dir ./ec3d     # trains on real EC3D data once you've downloaded it
 
 --- Getting the real data (do this yourself; not fetched automatically) ---
-1. Download EC3D from the paper's repo: arXiv:2208.03257,
-   "3D Pose Based Feedback for Physical Exercises" -- check the paper for
-   the current dataset link (GitHub, at last check).
-2. Follow the PRD's recommended split for comparability with the paper:
-   subjects 1-3 for train, subject 4 for test. Hold out a small slice of
-   the training subjects for validation.
-3. Fill in `EC3DDataset` below to load their per-rep joint-angle sequences
-   and label vectors instead of the synthetic generator. The exact label
-   set per exercise is in PRD 6.1 (e.g. squats: Correct, Feet too wide,
-   Knees inward, Not low enough, Front bent).
+The dataset is hosted on Google Drive, not GitHub, so it can't be fetched
+by a script automatically:
+1. Paper: arXiv:2208.03257, "3D Pose Based Feedback for Physical Exercises"
+   (Zhao et al., ACCV 2022). Reference implementation + exact download link:
+   https://github.com/Jacoo-Zhao/3D-Pose-Based-Feedback-For-Physical-Exercises
+   -> Google Drive folder linked in that repo's README.
+2. Download `data_3D.pickle` (the file the dataset's own README recommends
+   for reproducing results) into `--data-dir`, e.g. `classifier/ec3d/data_3D.pickle`.
+3. PRD's recommended split for comparability with the paper: subjects 1-3
+   for train, subject 4 for test (already wired into EC3DDataset below).
 
-Everything else (model, training loop, metrics) is dataset-agnostic and
-should not need to change.
+--- Confirmed pickle structure (from the dataset authors' own dataset.py) ---
+  data["poses"]  -> ndarray, shape (N_frames_total, 3, 25): xyz coords for
+                     25 body joints (NTU RGB+D-style layout), concatenated
+                     across every frame of every recorded rep.
+  data["labels"] -> array-like with columns ["act", "sub", "lab", "rep", "frame"]:
+                     act=exercise, sub=subject id (1-4), lab=instruction
+                     label id (0="Correct", 1+=a specific error, meaning
+                     differs per exercise per PRD 6.1's Table 1), rep=rep
+                     index, frame=frame index within that rep.
+
+IMPORTANT: EC3D's labels are single-label per rep (each rep was recorded
+under ONE instruction), not true multi-label. EC3DDataset one-hot-encodes
+them so they still work with this file's multi-label BCE training loop
+without changes -- switch to plain integer labels + CrossEntropyLoss if
+you'd rather train strictly single-label (more faithful to how the data
+was actually collected).
+
+Also note: EC3D ships raw xyz joint coordinates, not the 4 joint angles
+this project's live pipeline computes (frontend/js/jointAngles.js). So
+EC3DDataset uses 75 input channels (3 xyz * 25 joints, flattened) instead
+of JOINT_ANGLE_CHANNELS' 4 -- `main()` below sizes the model to whichever
+dataset you actually pass it, so this isn't a manual step.
 """
 import argparse
+import pickle
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 from sklearn.metrics import f1_score, accuracy_score
@@ -47,15 +71,77 @@ class SyntheticRepDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
+def _resample_to_length(x: np.ndarray, target_len: int) -> np.ndarray:
+    """Linearly resample a (channels, n_frames) array to (channels, target_len),
+    so reps of different durations all become fixed-size model inputs."""
+    n_frames = x.shape[1]
+    if n_frames == target_len:
+        return x
+    if n_frames == 1:
+        return np.repeat(x, target_len, axis=1)
+    src_idx = np.linspace(0, n_frames - 1, num=target_len)
+    out = np.zeros((x.shape[0], target_len), dtype=x.dtype)
+    for c in range(x.shape[0]):
+        out[c] = np.interp(src_idx, np.arange(n_frames), x[c])
+    return out
+
+
 class EC3DDataset(Dataset):
-    """TODO: implement once you have EC3D downloaded and parsed.
-    Expected: self.X shape (N, len(JOINT_ANGLE_CHANNELS), WINDOW_LEN),
-              self.y shape (N, num_error_classes), multi-hot."""
+    """Loads EC3D's `data_3D.pickle` -- see the module docstring above for
+    the confirmed pickle structure and the download link (Google Drive,
+    linked from the paper's reference GitHub repo).
+
+    Expects `data_3D.pickle` directly inside `data_dir`.
+    """
+
+    TRAIN_SUBJECTS = [1, 2, 3]
+    TEST_SUBJECTS = [4]
 
     def __init__(self, data_dir: str, split: str):
-        raise NotImplementedError(
-            "Fill this in once EC3D is downloaded -- see the module docstring for the subject split."
-        )
+        pickle_path = Path(data_dir) / "data_3D.pickle"
+        if not pickle_path.exists():
+            raise FileNotFoundError(
+                f"{pickle_path} not found. Download data_3D.pickle from the EC3D dataset's "
+                "Google Drive link (see this file's module docstring) and place it there."
+            )
+        with open(pickle_path, "rb") as f:
+            data = pickle.load(f)
+
+        poses = np.asarray(data["poses"])  # (N_frames_total, 3, 25)
+        labels_df = pd.DataFrame(data["labels"], columns=["act", "sub", "lab", "rep", "frame"])
+        labels_df["lab"] = labels_df["lab"].astype(int)
+        labels_df["sub"] = labels_df["sub"].astype(int)
+
+        subs = self.TRAIN_SUBJECTS if split == "train" else self.TEST_SUBJECTS
+        keep_mask = labels_df["sub"].isin(subs).to_numpy()
+        labels_df = labels_df[keep_mask].reset_index(drop=True)
+        poses = poses[keep_mask]
+
+        n_classes = int(labels_df["lab"].max()) + 1
+        X, y = [], []
+        for (_act, _sub, lab, _rep), group in labels_df.groupby(["act", "sub", "lab", "rep"]):
+            idx = group.index.to_numpy()
+            seq = poses[idx]  # (n_frames_in_rep, 3, 25)
+            seq_flat = seq.reshape(seq.shape[0], -1).T  # (75, n_frames_in_rep)
+            X.append(_resample_to_length(seq_flat, WINDOW_LEN).astype("float32"))
+
+            onehot = np.zeros(n_classes, dtype="float32")
+            onehot[lab] = 1.0
+            y.append(onehot)
+
+        if not X:
+            raise ValueError(f"No sequences found for split={split!r} (subjects={subs}) -- check the pickle contents.")
+
+        self.X = np.stack(X)
+        self.y = np.stack(y)
+        self.num_classes = n_classes
+        self.in_channels = self.X.shape[1]
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
 
 
 def run_epoch(model, loader, optimizer, loss_fn, device, train: bool):
@@ -99,8 +185,13 @@ def main():
     if args.smoke_test or not args.data_dir:
         print("Running with synthetic data (pass --data-dir once EC3D is ready).")
         dataset = SyntheticRepDataset(n_classes=args.n_classes)
+        in_channels = len(JOINT_ANGLE_CHANNELS)
+        n_classes = args.n_classes
     else:
         dataset = EC3DDataset(args.data_dir, split="train")
+        in_channels = dataset.in_channels  # 75 (3 xyz * 25 joints) for real EC3D data
+        n_classes = dataset.num_classes
+        print(f"Loaded {len(dataset)} EC3D training reps, {in_channels} input channels, {n_classes} classes.")
 
     n_val = max(1, int(0.2 * len(dataset)))
     train_ds, val_ds = random_split(dataset, [len(dataset) - n_val, n_val])
@@ -108,7 +199,7 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=args.batch_size)
 
     model = RepClassifier1DCNN(
-        in_channels=len(JOINT_ANGLE_CHANNELS), num_classes=args.n_classes, window_len=WINDOW_LEN
+        in_channels=in_channels, num_classes=n_classes, window_len=WINDOW_LEN
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = torch.nn.BCEWithLogitsLoss()

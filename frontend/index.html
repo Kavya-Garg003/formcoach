@@ -8,11 +8,24 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
+    "kalidokit": "https://cdn.jsdelivr.net/npm/kalidokit@1.1.5/dist/kalidokit.module.js",
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
   }
 }
 </script>
+<!--
+  Bare specifiers above (e.g. "three", "kalidokit") work two ways with no
+  code changes either way:
+    1. Zero-install: open this file through any static server and the
+       browser resolves them straight from the CDN URLs above.
+    2. npm/Vite: `npm install && npm run dev` in this folder resolves the
+       same specifiers from node_modules instead (Vite ignores the
+       importmap). See package.json.
+-->
+
 </head>
 <body>
 <div id="app">

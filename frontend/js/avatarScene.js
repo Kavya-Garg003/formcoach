@@ -1,23 +1,33 @@
 /**
  * Three.js rendering layer (PRD 6.2).
  *
- * MVP retargeting choice: rather than driving a rigged Mixamo/ReadyPlayerMe
- * glTF through Kalidokit IK (PRD's Week 6-8 stretch goal), this direct-
- * mapping "primitive skeleton" avatar places a sphere at each tracked
- * landmark and a cylinder along each bone, positioned straight from the
- * MediaPipe world landmarks every frame. It has no rig to fight with, so
- * it's the guaranteed-working baseline described in PRD 6.2/7 -- get this
- * running first, then swap in Kalidokit + a real rigged model behind the
- * same `update(landmarks)` interface once that's working (see docs/avatar-upgrade.md).
+ * Two retargeting paths behind the same `update()` interface, per the
+ * PRD's own "ship the baseline, upgrade behind a stable interface"
+ * philosophy (section 6.2/7, docs/avatar-upgrade.md):
+ *
+ *  1. PRIMITIVE SKELETON (always available, zero downloads): places a
+ *     sphere at each tracked landmark and a cylinder along each bone,
+ *     positioned straight from the MediaPipe world landmarks every frame.
+ *     No rig to fight with -- the guaranteed-working fallback.
+ *
+ *  2. RIGGED VRM + KALIDOKIT (the PRD's real Week 6-8 milestone): a
+ *     downloaded rigged humanoid driven by Kalidokit-solved bone
+ *     rotations, wired up in main.js via loadRiggedAvatar() /
+ *     updateRiggedAvatar() below. AvatarScene tries to load it on
+ *     construction and automatically keeps using the primitive skeleton
+ *     as the primary avatar if that load fails for any reason (missing
+ *     file, blocked network, unsupported WebGL) -- see docs/avatar-upgrade.md.
  *
  * Covers PRD 6.2 requirements:
  *  - dual avatar (primary mirror + translucent "ideal form" ghost)
- *  - HSL green->red deviation coloring per joint
+ *  - HSL green->red deviation coloring per joint (primitive) / whole-figure
+ *    tint (rigged VRM -- see riggedAvatar.js's tintVRM for why)
  *  - key light + ambient (Phong/Standard material lighting model)
  *  - perspective (orbit) + orthographic (side "form check") cameras
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { loadVRMAvatar, applyPoseToVRM, tintVRM } from "./riggedAvatar.js";
 
 // Bone connections using MediaPipe BlazePose indices (subset: torso + limbs).
 const BONES = [
@@ -173,8 +183,31 @@ export class AvatarScene {
     const grid = new THREE.GridHelper(6, 24, 0x2a2f38, 0x1a1d22);
     this.scene.add(grid);
 
+    // Rigged VRM primary avatar (PRD Week 6-8 milestone) -- loads
+    // asynchronously; the primitive skeleton above stays the visible
+    // primary avatar until/unless this resolves. See class doc comment.
+    this.vrmPrimary = null;
+    this.clock = new THREE.Clock();
+    this._loadRiggedAvatar();
+
     window.addEventListener("resize", () => this.onResize());
     this._animate();
+  }
+
+  async _loadRiggedAvatar() {
+    try {
+      const vrm = await loadVRMAvatar();
+      vrm.scene.position.set(0, 0, 0);
+      this.scene.add(vrm.scene);
+      this.vrmPrimary = vrm;
+      this.primary.group.visible = false; // hand off primary rendering to the VRM
+      console.log("[FormCoach] Rigged VRM avatar loaded -- driving it via Kalidokit.");
+    } catch (err) {
+      // Missing file, blocked network, bad WebGL context, etc. -- the
+      // primitive skeleton primary avatar (still visible) is the
+      // documented fallback here, not an error state. See docs/avatar-upgrade.md.
+      console.warn("[FormCoach] Rigged VRM avatar unavailable, using primitive skeleton primary avatar instead:", err);
+    }
   }
 
   _setupLighting() {
@@ -202,10 +235,22 @@ export class AvatarScene {
    * @param {object} deviationScores - {knee,hip,spine,ankle} 0..1
    * @param {Array|null} referenceLandmarks - optional ideal-form ghost pose;
    *   falls back to mirroring the same live pose (untinted by deviation) if omitted.
+   * @param {object|null} riggedPose - Kalidokit.Pose.solve() output for this
+   *   frame (see riggedAvatar.js's solvePose); only used once the VRM avatar
+   *   has finished loading, ignored otherwise.
    */
-  update(worldLandmarks, deviationScores, referenceLandmarks = null) {
-    updateSkeleton(this.primary, worldLandmarks, deviationScores);
+  update(worldLandmarks, deviationScores, referenceLandmarks = null, riggedPose = null) {
+    // Secondary "ideal form" ghost is always the primitive skeleton --
+    // see riggedAvatar.js's tintVRM doc comment for why the primary
+    // avatar's rendering technique doesn't matter for this one.
     updateSkeleton(this.secondary, referenceLandmarks || worldLandmarks, null);
+
+    if (this.vrmPrimary && riggedPose) {
+      applyPoseToVRM(this.vrmPrimary, riggedPose);
+      tintVRM(this.vrmPrimary, deviationScores);
+    } else {
+      updateSkeleton(this.primary, worldLandmarks, deviationScores);
+    }
   }
 
   onResize() {
@@ -225,6 +270,8 @@ export class AvatarScene {
 
   _animate() {
     requestAnimationFrame(() => this._animate());
+    const delta = this.clock.getDelta();
+    this.vrmPrimary?.update(delta); // advances three-vrm's internal spring/lookAt state
     this.controls.update();
     this.renderer.render(this.scene, this.activeCamera);
   }
