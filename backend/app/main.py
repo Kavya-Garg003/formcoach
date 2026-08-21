@@ -23,8 +23,10 @@ from .models import (
     RepLogRequest, RepLogResponse,
     ChatRequest, ChatResponse,
     SessionHistoryResponse, SessionSummary,
+    ClassifyRepRequest, ClassifyRepResponse, ClassifierStatusResponse,
 )
 from .agents.graph import run_chat
+from .classifier_infer import get_classifier_service
 
 app = FastAPI(title="FormCoach API", version="0.1.0")
 
@@ -83,3 +85,25 @@ def session_history(user_id: str):
     sessions = storage.get_user_sessions(user_id)
     summaries = [SessionSummary(**storage.build_session_summary(s["session_id"])) for s in sessions]
     return {"user_id": user_id, "sessions": summaries}
+
+
+@app.post("/classify/rep", response_model=ClassifyRepResponse)
+def classify_rep(req: ClassifyRepRequest):
+    """Runs one rep's frame sequence through the trained EC3D classifier,
+    if one has been trained and is loaded (see classifier_infer.py).
+    Returns {available: false, reason: ...} rather than an error if no
+    classifier is loaded -- this is an optional enhancement, not a
+    required part of the pipeline, so the frontend can just skip showing
+    it rather than treating it as a failure."""
+    service = get_classifier_service()
+    frames = [[{"x": p.x, "y": p.y, "z": p.z} for p in frame] for frame in req.frames]
+    result = service.predict(frames)
+    return result
+
+
+@app.get("/classifier/status", response_model=ClassifierStatusResponse)
+def classifier_status():
+    """Debug/diagnostic endpoint -- hit this in a browser or curl to see
+    whether a trained classifier is loaded and why, without needing a rep
+    recorded first."""
+    return get_classifier_service().status()

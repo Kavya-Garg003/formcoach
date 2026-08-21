@@ -74,3 +74,33 @@ class SessionSummary(BaseModel):
 class SessionHistoryResponse(BaseModel):
     user_id: str
     sessions: list[SessionSummary]
+
+
+class LandmarkPoint(BaseModel):
+    x: float
+    y: float
+    z: float
+
+
+class ClassifyRepRequest(BaseModel):
+    """One rep's worth of raw frames, sent so the backend can run it
+    through the trained EC3D classifier (see classifier_infer.py). Each
+    frame is all 33 BlazePose landmarks for that instant."""
+    frames: list[list[LandmarkPoint]]
+    exercise_type: str = Field(default="squat")
+
+
+class ClassifyRepResponse(BaseModel):
+    available: bool
+    reason: str | None = None
+    predicted_label: str | None = None
+    confidence: float | None = None
+    class_probabilities: dict[str, float] | None = None
+    caveat: str | None = None
+
+
+class ClassifierStatusResponse(BaseModel):
+    available: bool
+    checkpoint_path: str
+    error: str | None = None
+    meta: dict | None = None

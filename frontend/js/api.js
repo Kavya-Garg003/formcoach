@@ -33,4 +33,9 @@ export const api = {
     postJSON("/coach/chat", { session_id: sessionId, user_id: userId, message }),
 
   history: (userId) => getJSON(`/session/history/${userId}`),
+
+  classifyRep: (frames, exerciseType) =>
+    postJSON("/classify/rep", { frames, exercise_type: exerciseType }),
+
+  classifierStatus: () => getJSON("/classifier/status"),
 };

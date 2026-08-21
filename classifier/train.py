@@ -40,6 +40,7 @@ of JOINT_ANGLE_CHANNELS' 4 -- `main()` below sizes the model to whichever
 dataset you actually pass it, so this isn't a manual step.
 """
 import argparse
+import json
 import pickle
 from pathlib import Path
 
@@ -97,7 +98,19 @@ class EC3DDataset(Dataset):
     TRAIN_SUBJECTS = ["Hugues", "Sena", "Vidit", 1, 2, 3]
     TEST_SUBJECTS = ["Isinsu", 4]
 
-    def __init__(self, data_dir: str, split: str):
+    def __init__(self, data_dir: str, split: str, exercise=None, label_to_idx: dict | None = None):
+        """
+        @param exercise: optional filter on the 'act' column (e.g. "squat",
+            or whatever value your pickle actually uses -- run
+            `print(labels_df['act'].unique())` once to check). Strongly
+            recommended: train one classifier per exercise, since PRD 6.1's
+            error labels are exercise-specific (squat's label 2 means
+            something completely different from lunge's label 2).
+        @param label_to_idx: pass the *train* split's label_to_idx when
+            constructing the *test* split, so both splits use the same
+            class index assignment. Leave None to build it fresh (do this
+            for the train split).
+        """
         pickle_path = Path(data_dir) / "data_3D.pickle"
         if not pickle_path.exists():
             raise FileNotFoundError(
@@ -115,21 +128,52 @@ class EC3DDataset(Dataset):
         except (ValueError, TypeError):
             pass
 
+        if exercise is not None:
+            keep_mask = (labels_df["act"] == exercise).to_numpy()
+            if not keep_mask.any():
+                raise ValueError(
+                    f"exercise={exercise!r} matched nothing. Unique 'act' values in this "
+                    f"pickle: {sorted(labels_df['act'].unique(), key=str)}"
+                )
+            labels_df = labels_df[keep_mask].reset_index(drop=True)
+            poses = poses[keep_mask]
+
         subs = self.TRAIN_SUBJECTS if split == "train" else self.TEST_SUBJECTS
         keep_mask = labels_df["sub"].isin(subs).to_numpy()
         labels_df = labels_df[keep_mask].reset_index(drop=True)
         poses = poses[keep_mask]
 
-        n_classes = int(labels_df["lab"].max()) + 1
+        # IMPORTANT FIX: earlier versions of this loader used the raw 'lab'
+        # integer directly as the one-hot class index. That's only correct
+        # if you're training on a single exercise -- 'lab' is NOT globally
+        # unique across exercises (e.g. squat's lab=2 and lunge's lab=2 are
+        # unrelated error categories per PRD 6.1's Table 1), so a model
+        # trained on multiple exercises at once with the old code was
+        # silently conflating unrelated classes into the same output slot.
+        # This version keys classes on the (act, lab) PAIR instead, which
+        # is always unique and correct whether you filter to one exercise
+        # or train across all of them.
+        if label_to_idx is None:
+            unique_keys = sorted(
+                labels_df[["act", "lab"]].drop_duplicates().itertuples(index=False, name=None),
+                key=lambda t: (str(t[0]), t[1]),
+            )
+            label_to_idx = {key: i for i, key in enumerate(unique_keys)}
+        self.label_to_idx = label_to_idx
+        n_classes = len(label_to_idx)
+
         X, y = [], []
-        for (_act, _sub, lab, _rep), group in labels_df.groupby(["act", "sub", "lab", "rep"]):
+        for (act, _sub, lab, _rep), group in labels_df.groupby(["act", "sub", "lab", "rep"]):
+            key = (act, lab)
+            if key not in label_to_idx:
+                continue  # class seen in test but not train (or vice versa) -- skip rather than crash
             idx = group.index.to_numpy()
             seq = poses[idx]  # (n_frames_in_rep, 3, 25)
             seq_flat = seq.reshape(seq.shape[0], -1).T  # (75, n_frames_in_rep)
             X.append(_resample_to_length(seq_flat, WINDOW_LEN).astype("float32"))
 
             onehot = np.zeros(n_classes, dtype="float32")
-            onehot[lab] = 1.0
+            onehot[label_to_idx[key]] = 1.0
             y.append(onehot)
 
         if not X:
@@ -176,11 +220,20 @@ def run_epoch(model, loader, optimizer, loss_fn, device, train: bool):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--exercise", type=str, default=None,
+                         help="Filter to one exercise (e.g. 'squat'). Strongly recommended -- "
+                              "see EC3DDataset's docstring for why. Run once without this flag "
+                              "and check the printed unique 'act' values if you don't know the exact string.")
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--n-classes", type=int, default=5)
+    parser.add_argument("--out", type=str, default="rep_classifier.pt",
+                         help="Where to save the checkpoint. The backend's classifier serving "
+                              "endpoint (see backend/app/classifier_infer.py) looks for this file "
+                              "-- point it at the same path, or use the default and copy the file "
+                              "to backend/data/rep_classifier.pt after training.")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -190,11 +243,20 @@ def main():
         dataset = SyntheticRepDataset(n_classes=args.n_classes)
         in_channels = len(JOINT_ANGLE_CHANNELS)
         n_classes = args.n_classes
+        label_to_idx = {(f"class_{i}", i): i for i in range(n_classes)}
     else:
-        dataset = EC3DDataset(args.data_dir, split="train")
+        dataset = EC3DDataset(args.data_dir, split="train", exercise=args.exercise)
         in_channels = dataset.in_channels  # 75 (3 xyz * 25 joints) for real EC3D data
         n_classes = dataset.num_classes
+        label_to_idx = dataset.label_to_idx
         print(f"Loaded {len(dataset)} EC3D training reps, {in_channels} input channels, {n_classes} classes.")
+        print(f"Classes (act, lab) -> index: {label_to_idx}")
+        if args.exercise is None:
+            print(
+                "WARNING: no --exercise filter was passed, so this model is training across "
+                "every exercise's error labels mixed together. That's usually not what you "
+                "want -- see the --exercise flag's help text."
+            )
 
     n_val = max(1, int(0.2 * len(dataset)))
     train_ds, val_ds = random_split(dataset, [len(dataset) - n_val, n_val])
@@ -217,8 +279,27 @@ def main():
             f"val_exact_acc={val_metrics['exact_match_acc']:.3f}"
         )
 
-    torch.save(model.state_dict(), "rep_classifier.pt")
-    print("Saved rep_classifier.pt")
+    torch.save(model.state_dict(), args.out)
+
+    # Metadata sidecar: the backend needs in_channels/num_classes to
+    # reconstruct RepClassifier1DCNN before it can load this state_dict,
+    # and needs label_to_idx to translate a predicted class index back
+    # into something human-readable ("squat, knees inward" instead of "7").
+    meta_path = str(Path(args.out).with_suffix("")) + ".meta.json"
+    meta = {
+        "in_channels": in_channels,
+        "num_classes": n_classes,
+        "window_len": WINDOW_LEN,
+        "joint_angle_channels": JOINT_ANGLE_CHANNELS if in_channels == len(JOINT_ANGLE_CHANNELS) else None,
+        "feature_space": "joint_angles" if in_channels == len(JOINT_ANGLE_CHANNELS) else "ec3d_xyz_25joint",
+        "label_to_idx": {f"{act}|{lab}": idx for (act, lab), idx in label_to_idx.items()},
+        "exercise_filter": args.exercise,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    print(f"Saved {args.out}")
+    print(f"Saved {meta_path} (the backend's classifier serving endpoint needs this file too)")
 
 
 if __name__ == "__main__":

@@ -8,10 +8,26 @@ export class ChatPanel {
     this.getSessionId = getSessionId;
     this.getUserId = getUserId;
 
+    // Disabled by default -- main.js calls setEnabled(true) once a
+    // backend session actually exists. Previously this class silently did
+    // nothing on send() if there was no session yet, which looked exactly
+    // like "the button is broken" with zero feedback. Now it's visibly
+    // disabled instead, and re-enabling happens the moment it's usable.
+    this.setEnabled(false);
+
     this.formEl.addEventListener("submit", (e) => {
       e.preventDefault();
       this.send();
     });
+  }
+
+  setEnabled(enabled) {
+    this.inputEl.disabled = !enabled;
+    const btn = this.formEl.querySelector("button");
+    if (btn) btn.disabled = !enabled;
+    this.inputEl.placeholder = enabled
+      ? "Ask the coach about your form..."
+      : "Enable your camera first to start chatting...";
   }
 
   addMessage(role, text, citations = []) {
@@ -30,8 +46,16 @@ export class ChatPanel {
 
   async send() {
     const message = this.inputEl.value.trim();
+    if (!message) return;
+
     const sessionId = this.getSessionId();
-    if (!message || !sessionId) return;
+    if (!sessionId) {
+      // Should be unreachable now that the input is disabled without a
+      // session, but keep a visible fallback instead of a silent return
+      // in case setEnabled() ever gets out of sync with reality.
+      this.addMessage("assistant", "No active session yet -- enable your camera first, then try again.");
+      return;
+    }
 
     this.addMessage("user", message);
     this.inputEl.value = "";
@@ -40,7 +64,7 @@ export class ChatPanel {
       const resp = await api.chat(sessionId, this.getUserId(), message);
       this.addMessage("assistant", resp.reply, resp.citations);
     } catch (err) {
-      this.addMessage("assistant", `(Couldn't reach the coach backend: ${err.message})`);
+      this.addMessage("assistant", `(Couldn't reach the coach backend: ${err.message}. Is uvicorn running on port 8000?)`);
     }
   }
 }

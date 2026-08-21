@@ -40,11 +40,20 @@
         <option value="lunge">Lunge</option>
       </select>
     </div>
+
+    <div id="mode-group">
+      <span id="mode-label">Mirror</span>
+      <button id="btn-back-to-mirror" class="cam-btn hidden" title="Stop the demo, just mirror me again">Back to Mirror</button>
+      <button id="btn-start" class="primary-btn" disabled title="Enable your camera first">Start Session</button>
+      <button id="btn-stop-session" class="cam-btn hidden">Stop Session</button>
+    </div>
+
     <div id="camera-toggle-group">
       <button id="btn-cam-perspective" class="cam-btn active" title="Live mirror view">Perspective</button>
       <button id="btn-cam-ortho" class="cam-btn" title="Side-view form check">Ortho (Form Check)</button>
     </div>
-    <button id="btn-start" class="primary-btn">Start Session</button>
+
+    <button id="btn-settings-toggle" class="cam-btn" title="Settings">⚙ Settings</button>
   </header>
 
   <main id="layout">
@@ -59,7 +68,51 @@
         <div id="rep-phase">Phase: <span id="rep-phase-val">idle</span></div>
       </div>
 
+      <div id="debug-status">
+        <span id="debug-delegate">delegate: --</span>
+        <span id="debug-fps">fps: --</span>
+        <span id="debug-vrm">avatar: --</span>
+        <span id="debug-visibility">tracked: --</span>
+      </div>
+
       <div id="live-deviation-banner" class="hidden"></div>
+
+      <div id="settings-panel" class="card hidden">
+        <h3>Settings</h3>
+
+        <label class="setting-row">
+          <span>Avatar</span>
+          <select id="setting-avatar-style">
+            <option value="auto">Rigged (auto-fallback)</option>
+            <option value="rigged">Rigged only</option>
+            <option value="skeleton">Simple skeleton</option>
+          </select>
+        </label>
+
+        <label class="setting-row">
+          <span>Mirror movement</span>
+          <input type="checkbox" id="setting-mirror" checked />
+        </label>
+        <p class="setting-hint">If raising your right hand moves the avatar's LEFT side, uncheck this.</p>
+
+        <label class="setting-row">
+          <span>Tracking responsiveness</span>
+          <input type="range" id="setting-responsiveness" min="10" max="90" value="35" />
+        </label>
+        <p class="setting-hint">Higher = catches subtle movement faster, but jitterier.</p>
+
+        <label class="setting-row">
+          <span>Demo playback speed</span>
+          <input type="range" id="setting-demo-speed" min="25" max="200" value="100" />
+        </label>
+
+        <label class="setting-row">
+          <span>Camera</span>
+          <select id="setting-camera-device"><option value="">Default camera</option></select>
+        </label>
+        <p class="setting-hint">Using a phone as a webcam (Iriun/DroidCam)? Select it here once connected.</p>
+      </div>
+
     </section>
 
     <aside id="side-panel">
@@ -73,8 +126,8 @@
         <h3>Coach Chat</h3>
         <div id="chat-log"></div>
         <form id="chat-form">
-          <input id="chat-input" type="text" placeholder="Ask the coach about your form..." autocomplete="off" />
-          <button type="submit">Send</button>
+          <input id="chat-input" type="text" placeholder="Enable your camera first to start chatting..." autocomplete="off" disabled />
+          <button type="submit" disabled>Send</button>
         </form>
       </div>
 

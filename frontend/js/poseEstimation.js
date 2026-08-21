@@ -25,6 +25,7 @@ export class PoseEstimator {
   constructor() {
     this.landmarker = null;
     this.running = false;
+    this.activeDelegate = null; // "GPU" | "CPU", whichever actually succeeded -- see main.js's debug status bar
   }
 
   async init({ delegate = "GPU" } = {}) {
@@ -37,6 +38,7 @@ export class PoseEstimator {
       runningMode: "VIDEO",
       numPoses: 1,
     });
+    this.activeDelegate = delegate;
   }
 
   /**
