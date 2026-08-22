@@ -129,7 +129,7 @@ class EC3DDataset(Dataset):
             pass
 
         if exercise is not None:
-            keep_mask = (labels_df["act"] == exercise).to_numpy()
+            keep_mask = (labels_df["act"].str.lower() == exercise.lower()).to_numpy()
             if not keep_mask.any():
                 raise ValueError(
                     f"exercise={exercise!r} matched nothing. Unique 'act' values in this "

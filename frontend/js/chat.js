@@ -33,12 +33,29 @@ export class ChatPanel {
   addMessage(role, text, citations = []) {
     const div = document.createElement("div");
     div.className = `chat-msg ${role}`;
-    div.textContent = text;
-    if (citations.length) {
-      const cites = document.createElement("div");
-      cites.className = "cites";
-      cites.textContent = `Sources: ${citations.join(", ")}`;
-      div.appendChild(cites);
+
+    const textSpan = document.createElement("div");
+    textSpan.className = "msg-text";
+    // Replace **bold** with <strong> and preserve line breaks
+    const formatted = (text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\n\n+/g, "<br/><br/>")
+      .replace(/\n/g, "<br/>");
+    textSpan.innerHTML = formatted;
+    div.appendChild(textSpan);
+
+    if (citations && citations.length > 0) {
+      // Filter out duplicate or empty citation titles
+      const uniqueCites = [...new Set(citations.filter(Boolean))];
+      if (uniqueCites.length > 0) {
+        const cites = document.createElement("div");
+        cites.className = "cites";
+        cites.innerHTML = `<span class="cite-icon">📚</span> ${uniqueCites.join(" · ")}`;
+        div.appendChild(cites);
+      }
     }
     this.logEl.appendChild(div);
     this.logEl.scrollTop = this.logEl.scrollHeight;

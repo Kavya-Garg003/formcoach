@@ -350,17 +350,15 @@ function updateStatsPanel() {
 async function startSession() {
   const exercise = els.exerciseSelect.value;
 
-  if (!sessionId) {
-    // Session creation at camera-enable time failed (backend unreachable).
-    // Retry here so Start Session still works if the backend has come up since.
-    try {
-      const session = await api.startSession(USER_ID, exercise);
-      sessionId = session.session_id;
-      chat.setEnabled(true);
-    } catch (err) {
-      alert(`Couldn't reach the backend at http://localhost:8000 -- is it running?\n\n${err.message}`);
-      return;
-    }
+  // Always create a fresh backend session on each "Start Session" click so
+  // rep counts are not shared across separate workout attempts.
+  try {
+    const session = await api.startSession(USER_ID, exercise);
+    sessionId = session.session_id;
+    chat.setEnabled(true);
+  } catch (err) {
+    alert(`Couldn't reach the backend at http://localhost:8000 -- is it running?\n\n${err.message}`);
+    return;
   }
 
   deviationTotals = {};
@@ -392,8 +390,11 @@ async function handleRepComplete({ repIndex, minKneeAngle }) {
   els.repCountVal.textContent = String(repIndex);
 
   const exercise = els.exerciseSelect.value;
-  const angles = { knee_flexion: minKneeAngle, hip_flexion: null, spine_angle: null, ankle_dorsiflexion: null };
-  const { deviations } = classifyDeviations(exercise, angles, null, "bottom");
+  // Include only non-null angles so Pydantic (dict[str, float]) accepts the payload.
+  // Null values cause a silent 422 that prevents reps from being saved to the backend.
+  const rawAngles = { knee_flexion: minKneeAngle, hip_flexion: null, spine_angle: null, ankle_dorsiflexion: null };
+  const angles = Object.fromEntries(Object.entries(rawAngles).filter(([, v]) => v != null));
+  const { deviations } = classifyDeviations(exercise, rawAngles, null, "bottom");
 
   for (const d of deviations) {
     deviationTotals[d] = (deviationTotals[d] || 0) + 1;

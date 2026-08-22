@@ -81,7 +81,7 @@ def _call_anthropic(system: str, user: str, api_key: str) -> str:
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=600,
+        max_tokens=2048,
         system=system,
         messages=[{"role": "user", "content": user}],
     )
@@ -102,7 +102,7 @@ def _call_gemini(system: str, user: str, api_key: str) -> str:
         contents=user,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            max_output_tokens=600,
+            max_output_tokens=2048,
         ),
     )
     return resp.text or ""
@@ -121,9 +121,18 @@ def analysis_node(state: AgentState) -> AgentState:
 
 
 def coaching_node(state: AgentState) -> AgentState:
-    docs = rag.get_store().search(state["user_message"], k=3)
-    context_block = "\n\n---\n\n".join(f"[{d['title']}]\n{d['text']}" for d in docs)
     summary = state.get("session_summary", {})
+    exercise = summary.get("exercise_type", "")
+    top_errors = summary.get("top_recurring_errors", [])
+    
+    # Query with exercise context + recurring deviations so retrieved docs match the workout
+    query_parts = [exercise, state["user_message"]]
+    if top_errors:
+        query_parts.extend(top_errors)
+    rag_query = " ".join(filter(None, query_parts))
+
+    docs = rag.get_store().search(rag_query, k=2)
+    context_block = "\n\n---\n\n".join(f"[{d['title']}]\n{d['text']}" for d in docs)
 
     user_prompt = f"""User's session summary so far:
 {summary}
@@ -133,8 +142,7 @@ Retrieved reference material:
 
 User question: {state['user_message']}
 
-Answer the user's question, citing which reference doc(s) you drew on by
-title. Close with one concrete, actionable tip for their next rep."""
+Answer the user's question clearly, thoroughly, and encouragingly using the session data and reference material above. Close with one concrete, actionable tip for their next rep."""
 
     reply = _call_llm(SYSTEM_PROMPT, user_prompt)
     return {
@@ -216,11 +224,7 @@ def run_chat(session_id: str, user_id: str, message: str) -> dict:
         "trace": [],
     }
     final_state = graph.invoke(initial_state)
-    reply = final_state["reply"]
-    if not reply.startswith("[DEMO MODE"):
-        reply = f"{reply}\n\n---\n{DISCLAIMER}"
-    else:
-        reply = f"{reply}\n\n---\n{DISCLAIMER}"
+    reply = final_state["reply"].strip()
     return {
         "reply": reply,
         "citations": [d["title"] for d in final_state.get("retrieved_docs", [])],
